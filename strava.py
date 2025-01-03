@@ -106,7 +106,6 @@ def get_activities_for_2024():
 
             if response.status_code == 200:
                 activities = response.json()
-                #print(activities)
                 if not activities:  # No more activities to fetch
                     break
 
@@ -132,23 +131,6 @@ def get_activities_for_2024():
     except Exception as e:
         print(e)
 
-# Function to retrieve details of a specific activity
-def get_activity_details(activity_id):
-    try:
-        access_token = get_access_token()
-
-        headers = {
-            "Authorization": f"Bearer {access_token}"
-        }
-        activity_url = f"{BASE_URL}/activities/{activity_id}"
-        response = requests.get(activity_url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to retrieve activity details: {response.status_code} {response.text}")
-    except Exception as e:
-        print(e)
-        return None
 
 if __name__ == "__main__":
     stats = get_athlete_stats()
