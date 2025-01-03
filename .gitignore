@@ -171,3 +171,4 @@ cython_debug/
 .pypirc
 activities_2024.csv
 .DS_Store
+activities.csv
