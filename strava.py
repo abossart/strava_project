@@ -18,7 +18,7 @@ BASE_URL = "https://www.strava.com/api/v3"
 print(STRAVA_CLIENT_ID)
 # Metadata file and CSV file paths
 METADATA_FILE = "activity_metadata.json"
-CSV_FILE = "activities_2024.csv"
+CSV_FILE = "activities.csv"
 
 # Function to get a new access token
 def get_access_token():
@@ -48,33 +48,47 @@ def save_metadata(record_count, last_activity_date):
     with open(METADATA_FILE, "w") as f:
         json.dump(metadata, f)
 
+# Append activity to CSV dynamically
 def append_activity_to_csv(activity):
-    # Extract all keys from the activity and flatten nested dictionaries/lists if necessary
-    flattened_activity = {}
+    # Flatten nested fields and ensure consistent keys
+    flattened = {}
     for key, value in activity.items():
-        if isinstance(value, dict):
-            # Flatten nested dictionaries
-            for nested_key, nested_value in value.items():
-                flattened_activity[f"{key}.{nested_key}"] = nested_value
-        elif isinstance(value, list):
-            # Convert lists to strings (e.g., lat/lng coordinates)
-            flattened_activity[key] = str(value)
+        if isinstance(value, dict):  # Flatten nested dictionaries
+            for sub_key, sub_value in value.items():
+                flattened[f"{key}.{sub_key}"] = sub_value
+        elif isinstance(value, list):  # Convert lists to strings
+            flattened[key] = str(value)
         else:
-            # Use the value as-is
-            flattened_activity[key] = value
-    
-    # Ensure all fields are consistent by filling missing values with defaults
-    required_fields = set(flattened_activity.keys())
-    all_fields = required_fields.union(set(activity.keys()))  # Include all potential fields
-    complete_record = {field: flattened_activity.get(field, "") for field in all_fields}
+            flattened[key] = value
 
-    # Append to CSV
+    # Define all possible fields based on Strava API
+    required_fields = [
+        'resource_state', 'athlete.id', 'athlete.resource_state', 'name', 'distance', 'moving_time',
+        'elapsed_time', 'total_elevation_gain', 'type', 'sport_type', 'workout_type', 'id',
+        'start_date', 'start_date_local', 'timezone', 'utc_offset', 'location_city',
+        'location_state', 'location_country', 'achievement_count', 'kudos_count',
+        'comment_count', 'athlete_count', 'photo_count', 'map.id', 'map.summary_polyline',
+        'map.resource_state', 'trainer', 'commute', 'manual', 'private', 'visibility',
+        'flagged', 'gear_id', 'start_latlng', 'end_latlng', 'average_speed', 'max_speed',
+        'average_cadence', 'average_watts', 'max_watts', 'weighted_average_watts', 'device_watts',
+        'kilojoules', 'has_heartrate', 'average_heartrate', 'max_heartrate', 'heartrate_opt_out',
+        'display_hide_heartrate_option', 'elev_high', 'elev_low', 'upload_id', 'upload_id_str',
+        'external_id', 'from_accepted_tag', 'pr_count', 'total_photo_count', 'has_kudoed',
+        'suffer_score'
+    ]
+
+
+    # Fill missing fields with None
+    for field in required_fields:
+        if field not in flattened:
+            flattened[field] = None
+
     file_exists = os.path.isfile(CSV_FILE)
     with open(CSV_FILE, "a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=all_fields)
+        writer = csv.DictWriter(csvfile, fieldnames=required_fields)
         if not file_exists:
             writer.writeheader()
-        writer.writerow(complete_record)
+        writer.writerow({field: flattened.get(field) for field in required_fields})
 
 
 # Function to retrieve stats
@@ -110,7 +124,8 @@ def get_athlete_stats():
 def get_activities_for_2024():
     metadata = load_metadata()
     last_activity_date = metadata.get("last_activity_date")
-    record_count = metadata.get("record_count", 0)
+    #record_count = metadata.get("record_count", 0)
+    record_count = 0
 
     try:
         access_token = get_access_token()
@@ -132,15 +147,18 @@ def get_activities_for_2024():
                 for activity in activities:
                     activity_date = datetime.strptime(activity["start_date"], "%Y-%m-%dT%H:%M:%SZ")
                     print(activity_date)
+
                     #if activity_date.year == 2024:
                         #print(f"activity year is {activity_date.year}")
                         # Skip activities already processed
                         #if last_activity_date and activity["start_date"] <= last_activity_date:
                         #    continue
+                    #print(activity)
                     append_activity_to_csv(activity)
                     record_count += 1
                     print(f'Record count {record_count}')
                     last_activity_date = activity["start_date"]
+
                 
                 params["page"] += 1  # Increment the page for the next request
             else:

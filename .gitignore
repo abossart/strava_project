@@ -170,3 +170,4 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 activities_2024.csv
+.DS_Store
