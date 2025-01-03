@@ -172,11 +172,17 @@ def get_activities_for_2024():
 
 if __name__ == "__main__":
     stats = get_athlete_stats()
+
+    refresh_data = input("Do you want to refresh the data?y/n \n")
+
     if stats:
         print("Athlete Stats:")
         print(stats)
     else:
         print("Failed to retrieve stats.")
     
-    get_activities_for_2024()
+    if refresh_data == 'y':
+        get_activities_for_2024()
+    else:
+        print("no updates")
     
