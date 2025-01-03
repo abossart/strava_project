@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 from datetime import datetime
 
 # Load environment variables from .env file
-load_dotenv()
+dotenv_path='../secret/.env'
+load_dotenv(dotenv_path=dotenv_path)
 
 # Strava API credentials
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
@@ -14,6 +15,7 @@ STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 STRAVA_REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
 BASE_URL = "https://www.strava.com/api/v3"
 
+print(STRAVA_CLIENT_ID)
 # Metadata file and CSV file paths
 METADATA_FILE = "activity_metadata.json"
 CSV_FILE = "activities_2024.csv"
@@ -46,15 +48,33 @@ def save_metadata(record_count, last_activity_date):
     with open(METADATA_FILE, "w") as f:
         json.dump(metadata, f)
 
-# Append activity to CSV dynamically
 def append_activity_to_csv(activity):
+    # Extract all keys from the activity and flatten nested dictionaries/lists if necessary
+    flattened_activity = {}
+    for key, value in activity.items():
+        if isinstance(value, dict):
+            # Flatten nested dictionaries
+            for nested_key, nested_value in value.items():
+                flattened_activity[f"{key}.{nested_key}"] = nested_value
+        elif isinstance(value, list):
+            # Convert lists to strings (e.g., lat/lng coordinates)
+            flattened_activity[key] = str(value)
+        else:
+            # Use the value as-is
+            flattened_activity[key] = value
+    
+    # Ensure all fields are consistent by filling missing values with defaults
+    required_fields = set(flattened_activity.keys())
+    all_fields = required_fields.union(set(activity.keys()))  # Include all potential fields
+    complete_record = {field: flattened_activity.get(field, "") for field in all_fields}
+
+    # Append to CSV
     file_exists = os.path.isfile(CSV_FILE)
     with open(CSV_FILE, "a", newline="") as csvfile:
-        fieldnames = activity.keys()
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(csvfile, fieldnames=all_fields)
         if not file_exists:
             writer.writeheader()
-        writer.writerow(activity)
+        writer.writerow(complete_record)
 
 
 # Function to retrieve stats
