@@ -1,0 +1,10 @@
+requests
+python-dotenv
+pandas
+langchain
+langchain-experimental
+langchain-community
+openai
+huggingface_hub
+pytest
+pytest-cov
