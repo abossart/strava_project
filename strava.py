@@ -1,12 +1,12 @@
 import requests
 import os
-import csv
 import json
+import pandas as pd
 from dotenv import load_dotenv
 from datetime import datetime
 
 # Load environment variables from .env file
-dotenv_path='../secret/.env'
+dotenv_path = '../secret/.env'
 load_dotenv(dotenv_path=dotenv_path)
 
 # Strava API credentials
@@ -15,13 +15,14 @@ STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 STRAVA_REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
 BASE_URL = "https://www.strava.com/api/v3"
 
-print(STRAVA_CLIENT_ID)
 # Metadata file and CSV file paths
 METADATA_FILE = "activity_metadata.json"
 CSV_FILE = "activities.csv"
 
-# Function to get a new access token
-def get_access_token():
+def get_strava_session():
+    """
+    Creates a requests.Session with the access token header.
+    """
     url = "https://www.strava.com/oauth/token"
     payload = {
         "client_id": STRAVA_CLIENT_ID,
@@ -29,77 +30,32 @@ def get_access_token():
         "refresh_token": STRAVA_REFRESH_TOKEN,
         "grant_type": "refresh_token",
     }
+    
     response = requests.post(url, data=payload)
     if response.status_code == 200:
-        return response.json()["access_token"]
+        access_token = response.json()["access_token"]
+        session = requests.Session()
+        session.headers.update({"Authorization": f"Bearer {access_token}"})
+        return session
     else:
         raise Exception(f"Failed to get access token: {response.status_code} {response.text}")
 
-# Load metadata from file
 def load_metadata():
     if os.path.exists(METADATA_FILE):
         with open(METADATA_FILE, "r") as f:
             return json.load(f)
     return {"record_count": 0, "last_activity_date": None}
 
-# Save metadata to file
 def save_metadata(record_count, last_activity_date):
     metadata = {"record_count": record_count, "last_activity_date": last_activity_date}
     with open(METADATA_FILE, "w") as f:
         json.dump(metadata, f)
 
-# Append activity to CSV dynamically
-def append_activity_to_csv(activity):
-    # Flatten nested fields and ensure consistent keys
-    flattened = {}
-    for key, value in activity.items():
-        if isinstance(value, dict):  # Flatten nested dictionaries
-            for sub_key, sub_value in value.items():
-                flattened[f"{key}.{sub_key}"] = sub_value
-        elif isinstance(value, list):  # Convert lists to strings
-            flattened[key] = str(value)
-        else:
-            flattened[key] = value
-
-    # Define all possible fields based on Strava API
-    required_fields = [
-        'resource_state', 'athlete.id', 'athlete.resource_state', 'name', 'distance', 'moving_time',
-        'elapsed_time', 'total_elevation_gain', 'type', 'sport_type', 'workout_type', 'id',
-        'start_date', 'start_date_local', 'timezone', 'utc_offset', 'location_city',
-        'location_state', 'location_country', 'achievement_count', 'kudos_count',
-        'comment_count', 'athlete_count', 'photo_count', 'map.id', 'map.summary_polyline',
-        'map.resource_state', 'trainer', 'commute', 'manual', 'private', 'visibility',
-        'flagged', 'gear_id', 'start_latlng', 'end_latlng', 'average_speed', 'max_speed',
-        'average_cadence', 'average_watts', 'max_watts', 'weighted_average_watts', 'device_watts',
-        'kilojoules', 'has_heartrate', 'average_heartrate', 'max_heartrate', 'heartrate_opt_out',
-        'display_hide_heartrate_option', 'elev_high', 'elev_low', 'upload_id', 'upload_id_str',
-        'external_id', 'from_accepted_tag', 'pr_count', 'total_photo_count', 'has_kudoed',
-        'suffer_score'
-    ]
-
-
-    # Fill missing fields with None
-    for field in required_fields:
-        if field not in flattened:
-            flattened[field] = None
-
-    file_exists = os.path.isfile(CSV_FILE)
-    with open(CSV_FILE, "a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=required_fields)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow({field: flattened.get(field) for field in required_fields})
-
-
-# Function to retrieve stats
 def get_athlete_stats():
     try:
-        access_token = get_access_token()
+        session = get_strava_session()
         
-        headers = {
-            "Authorization": f"Bearer {access_token}"
-        }
-        response = requests.get(f"{BASE_URL}/athlete", headers=headers)
+        response = session.get(f"{BASE_URL}/athlete")
         if response.status_code == 200:
             athlete_data = response.json()
             print("Athlete Details:")
@@ -107,11 +63,10 @@ def get_athlete_stats():
 
             # Get stats for the athlete
             stats_url = f"{BASE_URL}/athletes/{athlete_data['id']}/stats"
-            stats_response = requests.get(stats_url, headers=headers)
+            stats_response = session.get(stats_url)
 
             if stats_response.status_code == 200:
-                stats_data = stats_response.json()
-                return stats_data
+                return stats_response.json()
             else:
                 raise Exception(f"Failed to retrieve stats: {stats_response.status_code} {stats_response.text}")
         else:
@@ -120,60 +75,85 @@ def get_athlete_stats():
         print(e)
         return None
 
-# Retrieve activities for 2024
-def get_activities_for_2024():
+def fetch_new_activities():
     metadata = load_metadata()
     last_activity_date = metadata.get("last_activity_date")
-    #record_count = metadata.get("record_count", 0)
-    record_count = 0
-
+    total_record_count = metadata.get("record_count", 0)
+    
+    new_activities = []
+    
     try:
-        access_token = get_access_token()
-        headers = {"Authorization": f"Bearer {access_token}"}
+        session = get_strava_session()
         activities_url = f"{BASE_URL}/athlete/activities"
         params = {"per_page": 50, "page": 1}
         
+        # If we have a last activity date, we can use 'after' parameter if we were fetching chronologically,
+        # but Strava API default is reverse chronological (newest first).
+        # So we fetch pages until we hit a date <= last_activity_date.
+        
+        print("Fetching activities...")
         while True:
-            response = requests.get(activities_url, headers=headers, params=params)
+            response = session.get(activities_url, params=params)
+            
             if response.status_code == 429:
                 print("Rate limit exceeded. Exiting.")
                 break
 
             if response.status_code == 200:
                 activities = response.json()
-                if not activities:  # No more activities to fetch
+                if not activities:
                     break
 
+                stop_fetching = False
                 for activity in activities:
-                    activity_date = datetime.strptime(activity["start_date"], "%Y-%m-%dT%H:%M:%SZ")
-                    print(activity_date)
+                    # Check if we've reached already processed activities
+                    # Note: String comparison works for ISO format dates
+                    if last_activity_date and activity["start_date"] <= last_activity_date:
+                        stop_fetching = True
+                        break
+                    
+                    new_activities.append(activity)
+                    print(f"Found new activity: {activity['start_date']}")
 
-                    #if activity_date.year == 2024:
-                        #print(f"activity year is {activity_date.year}")
-                        # Skip activities already processed
-                        #if last_activity_date and activity["start_date"] <= last_activity_date:
-                        #    continue
-                    #print(activity)
-                    append_activity_to_csv(activity)
-                    record_count += 1
-                    print(f'Record count {record_count}')
-                    last_activity_date = activity["start_date"]
-
+                if stop_fetching:
+                    break
                 
-                params["page"] += 1  # Increment the page for the next request
+                params["page"] += 1
             else:
                 raise Exception(f"Failed to retrieve activities: {response.status_code} {response.text}")
 
-        save_metadata(record_count, last_activity_date)
-        print(f"Saved {record_count} activities. Last activity date: {last_activity_date}")
-    except Exception as e:
-        print(e)
+        if new_activities:
+            # Normalize JSON to flat table
+            df = pd.json_normalize(new_activities)
+            
+            # Ensure consistent columns if needed, or just let pandas handle it.
+            # If we want to match the previous specific list of fields, we can filter, 
+            # but usually keeping all data is better unless specified otherwise.
+            # For now, I will keep all columns to be safe and flexible.
+            
+            # Append to CSV
+            file_exists = os.path.isfile(CSV_FILE)
+            mode = 'a' if file_exists else 'w'
+            header = not file_exists
+            
+            df.to_csv(CSV_FILE, mode=mode, header=header, index=False)
+            
+            # Update metadata
+            # The new last_activity_date should be the date of the *most recent* activity found.
+            # Since we fetch newest first, it's the first item in new_activities.
+            latest_date = new_activities[0]["start_date"]
+            total_record_count += len(new_activities)
+            
+            save_metadata(total_record_count, latest_date)
+            print(f"Saved {len(new_activities)} new activities. Total records: {total_record_count}")
+        else:
+            print("No new activities found.")
 
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     stats = get_athlete_stats()
-
-    refresh_data = input("Do you want to refresh the data?y/n \n")
 
     if stats:
         print("Athlete Stats:")
@@ -181,8 +161,9 @@ if __name__ == "__main__":
     else:
         print("Failed to retrieve stats.")
     
-    if refresh_data == 'y':
-        get_activities_for_2024()
-    else:
-        print("no updates")
+    refresh_data = input("Do you want to refresh the data? (y/n) \n")
     
+    if refresh_data.strip().lower() == 'y':
+        fetch_new_activities()
+    else:
+        print("No updates requested.")
