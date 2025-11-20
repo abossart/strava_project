@@ -169,3 +169,61 @@ def test_rate_limit_handling(mock_load, mock_get_session):
     with patch("builtins.print") as mock_print:
         strava.fetch_new_activities()
         mock_print.assert_any_call("Rate limit exceeded. Exiting.")
+
+@patch("strava.get_strava_session")
+def test_get_athlete_stats_api_failure(mock_get_session):
+    mock_session = MagicMock()
+    mock_get_session.return_value = mock_session
+    
+    # Case 1: Athlete Profile fails
+    resp_fail = MagicMock(); resp_fail.status_code = 500; resp_fail.text = "Server Error"
+    mock_session.get.return_value = resp_fail
+    
+    with patch("builtins.print") as mock_print:
+        stats = strava.get_athlete_stats()
+        assert stats is None
+        # Verify the exception message was printed
+        # The code catches Exception and prints it. 
+        # The exception raised is: Exception("Failed to retrieve athlete data: 500 Server Error")
+        # We check if print was called with an Exception object containing that text
+        args, _ = mock_print.call_args
+        assert "Failed to retrieve athlete data: 500 Server Error" in str(args[0])
+
+    # Case 2: Athlete Profile succeeds, Stats fails
+    resp_ok = MagicMock(); resp_ok.status_code = 200; resp_ok.json.return_value = {"id": 123}
+    resp_fail_stats = MagicMock(); resp_fail_stats.status_code = 404; resp_fail_stats.text = "Not Found"
+    
+    mock_session.get.side_effect = [resp_ok, resp_fail_stats]
+    
+    with patch("builtins.print") as mock_print:
+        stats = strava.get_athlete_stats()
+        assert stats is None
+        args, _ = mock_print.call_args
+        assert "Failed to retrieve stats: 404 Not Found" in str(args[0])
+
+@patch("strava.get_strava_session")
+@patch("strava.load_metadata")
+def test_fetch_new_activities_api_failure(mock_load, mock_get_session):
+    mock_load.return_value = {"record_count": 0, "last_activity_date": None}
+    mock_session = MagicMock()
+    mock_get_session.return_value = mock_session
+
+    # Return generic error (e.g. 500)
+    resp = MagicMock(); resp.status_code = 500; resp.text = "Internal Error"
+    mock_session.get.return_value = resp
+
+    with patch("builtins.print") as mock_print:
+        strava.fetch_new_activities()
+        # Should catch the exception and print it
+        # The exception raised is: Exception("Failed to retrieve activities: 500 Internal Error")
+        
+        # We need to find the call that prints the error.
+        # It prints "An error occurred: ..."
+        
+        found = False
+        for call in mock_print.mock_calls:
+            arg = str(call.args[0])
+            if "An error occurred:" in arg and "Failed to retrieve activities: 500 Internal Error" in arg:
+                found = True
+                break
+        assert found
